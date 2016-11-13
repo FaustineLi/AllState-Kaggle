@@ -26,14 +26,14 @@ xgb_params = list(
     max_depth = 6,
     num_parallel_tree = 1,
     min_child_weight = 1,
-    base_score = 7
-)
+    base_score = 7,
+    gamma = 0)
 
 res = xgb.cv(data = dtrain,
              params = xgb_params,
-             nround=500,
+             nround = 500,
              early_stopping_rounds = 20,
-             nfold = 4,
+             nfold = 5,
              feval = xgb_mae,
              maximize = FALSE)
 
