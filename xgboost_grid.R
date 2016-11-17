@@ -1,20 +1,20 @@
-# grid search on max_depth and min_child_weight
-grid_max_depth = seq(3,10)
-grid_child_weight = seq(1,5)
+grid_colsample = seq(0.3, 0.9, 0.1)
+grid_subsample = seq(0.3, 0.9, 0.1)
 grid_result = data.frame()
 
-for (max_depth in grid_max_depth) {
+for (colsample in grid_colsample) {
 
-    for (child_weight in grid_child_weight) {
+    for (subsample in grid_subsample) {
 
+        set.seed(0)
         xgb_params = list(
             seed = 0,
-            colsample_bytree = 0.8,
-            subsample = 0.8,
+            colsample_bytree = colsample,
+            subsample = subsample,
             eta = 0.1,
             objective = 'reg:linear',
-            max_depth = max_depth,
-            min_child_weight = child_weight,
+            max_depth = 6,
+            min_child_weight = 9,
             gamma = 0,
             alpha = 0,
             lambda = 1)
@@ -26,10 +26,11 @@ for (max_depth in grid_max_depth) {
             early_stopping_rounds = 20,
             nfold = 5,
             feval = xgb_mae,
+            verbose = 0,
             maximize = FALSE)
 
-        row = c(res$params$max_depth,
-                res$params$min_child_weight,
+        row = c(res$params$colsample_bytree,
+                res$params$subsample,
                 res$best_iteration,
                 res$evaluation_log[res$best_iteration]$test_error_mean,
                 res$evaluation_log[res$best_iteration]$test_error_std)
@@ -38,6 +39,3 @@ for (max_depth in grid_max_depth) {
 
     }
 }
-
-grid_result = setNames(grid_result, c('max_depth', 'child_weight',
-                                      'niter', 'cv_error', 'cv_std'))
