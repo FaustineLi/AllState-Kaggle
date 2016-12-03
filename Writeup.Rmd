@@ -143,7 +143,7 @@ The R implementation `xgboost` (by dmlc) [^4] allows for the parallel processing
 During this stage, I focused on setting up a good environment to evaluate model performance. I used the built-in function to perform 5-fold cross-validation. The data is split randomly into five folds. Cross-validating during each round allows us gauge performance during training. The model is set-up to stop at the best interation once error on the test folds starts to increase (meaning it starts to overfit). We can visualize the training with the plot below. 
 
 ```{r, echo=FALSE}
-res = readRDS('writeup//res_extra_feat.RDS')
+res = readRDS('result//res_extra_feat.RDS')
 plot(res$evaluation_log$train_error_mean, type = 'l', xlab='Rounds', ylab='MAE')
 lines(res$evaluation_log$test_error_mean, col = 'red')
 legend('topright', c('test error', 'train error'), col = c(2,1,4), lty=1)
@@ -173,7 +173,7 @@ First, I fixed the learning rate at higher value and tuned two of the tree param
 
 ```{r, echo=FALSE}
 library('ggplot2')
-grid1 = readRDS('writeup//grid_result.RDS')
+grid1 = readRDS('result//grid_result.RDS')
 ggplot(grid1, aes(x=max_depth, y=cv_error, color=as.factor(child_weight)))+
     geom_point() + 
     theme_bw() + 
@@ -188,7 +188,7 @@ ggplot(grid1, aes(x=max_depth, y=cv_error, color=as.factor(child_weight)))+
 It seems that `max_depth = 6` is the best value for our data. However it isn't clear what value to choose for `min_child_weight`, although larger numbers seem to better. We expand the search below, fixing the max depth. 
 
 ```{r, echo=FALSE}
-grid2 = readRDS('writeup//grid_result_child.RDS')
+grid2 = readRDS('result//grid_result_child.RDS')
 ggplot(grid2, aes(x=child_weight, y=cv_error)) +
     geom_point() +
     geom_errorbar(aes(ymax = cv_error + cv_std, 
@@ -206,7 +206,7 @@ There is a lot of noise in our cross-validation results which makes the data har
 Next I swept the parameter space for `colsample_bytree` and `subsample`. 
 
 ```{r, echo=FALSE}
-grid3 = readRDS('writeup//grid_result_samp.RDS')
+grid3 = readRDS('result//grid_result_samp.RDS')
 grid3 = setNames(grid3, c('colsample_bytree', 'subsample', '', 'cv_error', 'cv_std'))
 ggplot(grid3, aes(x=colsample_bytree, y=cv_error, col = as.factor(subsample))) +
     geom_point() +
@@ -252,7 +252,7 @@ I combined these these insights and started in a area of parameter space that wa
 Now that the single-model is running well, I looked towards preliminary feature engineering. First I looked at the most important features, those that have the most predictive power according to `xgboost`.
 
 ```{r, echo=FALSE}
-importance = readRDS('writeup//feat_import.RDS')
+importance = readRDS('result//feat_import.RDS')
 kable(head(importance, 20))
 ```
 
@@ -267,7 +267,7 @@ Including interaction terms for the first 16 categorical variables improved the 
 We can check if `xgboost` is using our new variables. 
 
 ```{r, echo=FALSE}
-importance_extra = readRDS('writeup//feat_import_extra.RDS')
+importance_extra = readRDS('result//feat_import_extra.RDS')
 kable(head(importance_extra, 20))
 ```
 
