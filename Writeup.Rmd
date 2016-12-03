@@ -1,0 +1,417 @@
+---
+title: "STA 561 - Kaggle Competition"
+author: "Faustine Li"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r, echo=FALSE}
+train = read.csv('data\\pml_train.csv')
+library('knitr')
+```
+
+## Introduction
+
+Kaggle is a platform for participating in predictive modeling competitions. Competitors use it as platform to collaborate, share, and learn with peers on techniques in the world of applied machine learning. In this competition, data was taken from the AllState Insurence Claim Severity competition [^1]. Our objective is to predict the cost of a claim (in USD) and the error metric is mean absolute error (MAE).
+
+In David Wind's thesis, *Concepts in Predictive Machine Learning* [^2], five main points were emphasized in succeeding Kaggle submissions:
+
+* Feature engineering is the most important part
+* Simple models can get you very far
+* Ensembling is a winning strategy
+* Overfitting to the leaderboard is an issue
+* Predicting the right thing is important 
+
+We will keep these guidelines in mind during the iterative modeling process:
+
+* Exploratory data analysis
+* Data Processing
+* Model selection
+* Parameter tuning
+* Ensembling
+
+<br>
+
+## Exploratory Data Analysis
+
+First I investigated the features of the data set. There are 130 features in the training set, plus the loss we want to predict and an id column. Of the features, there are 116 catagorical catagories and 14 continuous catagories. The features other than id and loss are anonymized.
+
+First I looked at loss. Most of the values are in the range of 1000-4000, but there are some values that are much much higher. This indicates we might want to use a log transform.
+
+```{r}
+summary(train$loss)
+loss = log(train$loss)
+summary(loss)
+
+range = seq(min(loss), max(loss), 0.01)
+cum_loss = apply(as.matrix(range), 1, 
+                 function(x) sum(loss < x) / length(loss))
+
+plot(density(loss), main = 'Log Loss')
+plot(range, cum_loss, type = 'l', main = 'Cumulative Log Loss')
+```
+
+Let's look at the continuous features.
+
+```{r, echo=FALSE}
+# analysis of continous features
+boxplot(train[,118:131])
+```
+
+All the features seem to be bounded by zero and one and have a median around 0.5. It is likely that many of these features are from continous variables such as income or insurance premimum that have been rescaled. Continous feature 9 has a lot of outliers.
+
+```{r, echo=FALSE}
+par(mfrow = c(3,5))
+count = 0
+for (i in seq(118, 131)) {
+    count = count + 1
+    plot(density(train[[i]]), 
+         main = paste('Cont', as.character(count)), xlab = '')
+}
+```
+
+There are some very interesting or pathological results. Many variables are highly multi-model. Continous variable 2 is very discrete. Continuous variable 7 seems similar in shape to a Pareto distribution. Continous variable 14 is very multi-modal with possible cyclic patterns.
+
+Some continous variables looks similar. Let's plot cont 11, 12, and 14.
+
+```{r, echo=FALSE}
+plot(1, type="n", xlab="", ylab="", xlim=c(0, 1), ylim=c(0, 5))
+for (i in c(128, 129, 131)) {
+    lines(density(train[[i]]), main = 'Correlated Cont')
+}
+```
+
+We see that cont11 and 12 are almost identical in distribution. Cont 14 has a different distribution but the peaks line up. Because there are seven peaks, these variables could represent some sort of day of the week cycle.
+
+Now we will look at the catagorical variables. 
+
+```{r, echo=FALSE}
+par(mfrow = c(3,5))
+for (i in 2:117) {
+    barplot(table(train[,i]), main = paste('Cat', as.character(i)))
+}
+```
+
+Some of these features have interesting properties. For example many catagories, like cat16, have very few entries of one type. Cat104 seems to be ordered by frequency. Cat105, 106, 107, and 108 look to be normally distributed. This indicates that some catagorical factors might be discretized continuous variables. 
+
+<br>
+
+## Data Pre-processing
+
+We want to convert the catagorical data into a form that can be interpreted by the models. The raw data has catagorical variables encoded as character factors, 'A', 'B', 'C', and so on. Some variables have many levels, so the the factors are encoded 'A' through 'Z', then 'AA', 'AB' and so on. 
+
+However, most of the packages for regression expect variables to be numeric. There are two ways to encode catagorical variables. 
+
+#### One-Hot Encoding 
+
+* Create dummy variable columns for each factor of a catagorical variable. 
+* For each catagorical variable, the encoding is 1 for within that factor and 0 if not 
+* For example a catagorical variable with factors red, green, and blue would be split into three columns, is_red, is_green, or is_blue. A color is encoded 1 if red, 0 otherwise, and so on. 
+
+#### Lexical Encoding
+
+* Encode numerical values in the order that the catagorical values are sorted.
+* For example, A becomes 1, B becomes 2, and so on. 
+
+Benefits of one-hot encoding is that many models expect catagorical data encoded this way. In cases where the order of the data doesn't matter, it can eliminate the risk of a model fitting to the order that the data is encoded. Some downsides are that for variables with very large number of factors, the size of the matrix can get very large (thankfully there are tools out there to encode the result as a sparse array).
+
+Benefits of lexical encoding is that it is easy to implement, keeps data sizes small, and preserves the order of factors. The order of the factors might contain information that the model can learn from.
+
+Exploratory data analysis of catagorical variables suggests that the factors in certain catagories might contained ordered data. Training on lexically-encoded data with a tree-based model (see next section) showed a marked increase in performance over one-hot encoded data. However, it does not rule out the possibility that one-hot encoded data performs better for linear-distance models. 
+
+Finally, the target was log transformed. This reduces skewness and improves model performance. Although more important for linear or margin-based models, this reduction of skewness seems to greatly improve performance in preliminary testing. Therefore, we carry on with lexically encoded information with log transformed loss. 
+
+<br> 
+
+## Initial Model Selection and Testing
+
+There are a wide selection of packages and models to choose from. For a preliminary model, I choose gradient boosted trees for a few reasons [^3]:
+
+* Generally robust to missing or skewed data
+
+* Model is regularized to combat overfitting 
+
+* Has many parameters to tune
+
+* Is a powerful and has seen success in past Kaggle events 
+
+The gradient boosted tree works in a similar way to other boosted models: a collection of weak learners are combined to produce a strong learner. At each iteration, the algorithm produces descision trees that act as weak learners. Each tree is scored by its accuracy and the solution is a weighted sum of the trees. One difference difference from other tree-based approaches such as random forest is that GBM is regularized to prevent overfitting. 
+
+The R implementation `xgboost` (by dmlc) [^4] allows for the parallel processing of trees, so models are quick to train. Because `xgboost` was so efficient, along with convience functions such as built-in cross-validation, there was a much faster turn-around when making changes to the model.
+
+During this stage, I focused on setting up a good environment to evaluate model performance. I used the built-in function to perform 5-fold cross-validation. The data is split randomly into five folds. Cross-validating during each round allows us gauge performance during training. The model is set-up to stop at the best interation once error on the test folds starts to increase (meaning it starts to overfit). We can visualize the training with the plot below. 
+
+```{r, echo=FALSE}
+res = readRDS('writeup//res_extra_feat.RDS')
+plot(res$evaluation_log$train_error_mean, type = 'l', xlab='Rounds', ylab='MAE')
+lines(res$evaluation_log$test_error_mean, col = 'red')
+legend('topright', c('test error', 'train error'), col = c(2,1,4), lty=1)
+```
+
+At this point, I had a `xgboost` pipeline set-up. As a base-line, the model scored 1160.7 on the leaderboard with default features and parameters and log transformed loss.
+
+<br>
+
+## Parameter Tuning
+
+Of course, there is a lot of room to grow in terms of model performance. I wanted to see how well a single model could perform before experimenting with feature engineering and ensembling. For parameter tuning, I followed a guide for `xgboost` by Aarshay Jain on the blog Analytics Vidhya [^5].
+
+* eta - learning rate; larger values converge faster, but may not be as accurate.
+
+* colsample_bytree - fraction of the features used for each tree; smaller values combat overfitting.  
+
+* subsample - fraction of data used for each tree; smaller values combat overfiting.
+
+* max_depth - maximum node depth for each tree; smaller values make the model more convervative
+
+* min_child_weight - mimimum sum of weights in node to split; larger values make the model more conservative
+
+* gamma, alpha, lambda - regularization terms, larger values prevent overfitting.   
+
+First, I fixed the learning rate at higher value and tuned two of the tree parameters, `max_depth` and `min_child_weight`. I started with a compartively large learning rate, `eta = 0.1`, and used a grid search to explore the parameter space. The results are plotted below. As a side note, the computational time for a naive grid search were very high, taking 3-4 hours on the statistics department server (256 GB RAM, 12-core Intel Xeon CPU).  
+
+```{r, echo=FALSE}
+library('ggplot2')
+grid1 = readRDS('writeup//grid_result.RDS')
+ggplot(grid1, aes(x=max_depth, y=cv_error, color=as.factor(child_weight)))+
+    geom_point() + 
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) + 
+    labs(x = 'Max Depth', 
+         y = 'Test Error (5 Fold CV)',
+         color = 'Min Child Weight',
+         title = 'Grid Search Results')
+```
+
+It seems that `max_depth = 6` is the best value for our data. However it isn't clear what value to choose for `min_child_weight`, although larger numbers seem to better. We expand the search below, fixing the max depth. 
+
+```{r, echo=FALSE}
+grid2 = readRDS('writeup//grid_result_child.RDS')
+ggplot(grid2, aes(x=child_weight, y=cv_error)) +
+    geom_point() +
+    geom_errorbar(aes(ymax = cv_error + cv_std, 
+                      ymin = cv_error - cv_std)) +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) + 
+    labs(x = 'Min Child Weight', 
+         y = 'Test Error (5 Fold CV)',
+         title = 'Grid Search Results')
+```
+
+There is a lot of noise in our cross-validation results which makes the data hard to interpret. The best performing value was 9, followed by 5. There is a lot of variability in the cross validation folds. I chose 9 at the time with plans to re-evaluate in the future. At this point I was getting values around ~1135 on the leaderboard.
+
+Next I swept the parameter space for `colsample_bytree` and `subsample`. 
+
+```{r, echo=FALSE}
+grid3 = readRDS('writeup//grid_result_samp.RDS')
+grid3 = setNames(grid3, c('colsample_bytree', 'subsample', '', 'cv_error', 'cv_std'))
+ggplot(grid3, aes(x=colsample_bytree, y=cv_error, col = as.factor(subsample))) +
+    geom_point() +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) + 
+    labs(x = 'colsample_bytree', 
+         y = 'Test Error (5 Fold CV)',
+         title = 'Grid Search Results')
+```
+
+I choose the best combination and I dropped the learning rate down to 0.01. This decreased my 5-fold cross-validation error to 1144 (down from ~1155). This improved my leaderboard score from about 1136 to 1130, which is an improvement, but not as significant as I was hoping.
+
+<br>
+
+## Custom Objective Function
+
+At this point, I read an informative post of the Kaggle forum - that although the evaluation metric is mean absolute error, the objective function that `xgboost` uses the train the trees is mean squared error (`reg:linear`) [^6]. Because absolute error is not differentiable at zero, so we should pick a loss function that better approximates MAE while still being differentiable. 
+
+This is illustrated below [^7]:
+
+```{r, echo=FALSE}
+x = seq(-3,3, 0.05)
+squared = x^2
+logcosh = log(cosh(x))
+abs = abs(x)
+plot(x, squared, type='l', ylim=c(0,4), col='red')
+lines(x, logcosh, col='blue')
+lines(x, abs)
+legend('topright', c('squared loss', 'absolute error loss', 'log cosh loss'), col = c(2,1,4), lty=1)
+```
+
+I chose the log(cosh(x)) loss function because it is twice differentiable (important as `xgboost` uses the second derivative in its numeric method) and better approximates our objective than MSE. Thankfully `xgboost` has the ability to use custom objective functions. 
+
+Another post showed that adding 200 to the loss before taking the log decreased the error [^8]. The reason seems to be that it further decreases the impact of outliers and creates a more symmetrical distribution.
+
+I combined these these insights and started in a area of parameter space that was suggested by one of the kernels in the main Kaggle forum [^9]. My cross-validated error with `eta = 0.03` was pushed down to 1440.6 and the submission on the leaderboard was 1124.9. I was making steady progress, so the next step I dropped the learning rate down to 0.01 and trained my model. This step took around 2 hours. I acheived a cross-validated score of 1138.5 and a leaderboard score of 1122.8.
+
+<br>
+
+## Preliminary Feature Engineering
+
+Now that the single-model is running well, I looked towards preliminary feature engineering. First I looked at the most important features, those that have the most predictive power according to `xgboost`.
+
+```{r, echo=FALSE}
+importance = readRDS('writeup//feat_import.RDS')
+kable(head(importance, 20))
+```
+
+I split the categories into categorical and continous variables. As a first pass, I took the first ten categorical variables and created 45 new columns with the pairwise sum of features. By adding these features we made the interaction between two features more explicit. This change the dropped cross-validated error from 1138.5 to 1137.5. But there's no reason to choose the top ten values. In fact, a plot of the gain (roughly how much better the trees with this feature did) shows a level off after the first 20 or so features. That set includes 16 categorical features and 4 continuous features.
+
+```{r, echo=FALSE}
+plot(importance$Gain, type = 'h', ylab = 'Gain')
+```
+
+Including interaction terms for the first 16 categorical variables improved the cross-validated score to 1134.8. and produced a leaderboard score of 1120. At this point, with a set of good hyperparameters and feature engineering I am doing 40 points better than where I started.   
+
+We can check if `xgboost` is using our new variables. 
+
+```{r, echo=FALSE}
+importance_extra = readRDS('writeup//feat_import_extra.RDS')
+kable(head(importance_extra, 20))
+```
+
+We see that the new features seem to have a big impact. I tried getting rid of the features that the model did not use. I eliminated the 12 worst features leaving behind 238 features. This increased performance by about half a point.
+
+<br>
+
+## Transforming the Continuous Features 
+
+Next I wanted to transform the continuous variables. The first thing I tried was a to do a similar thing with the categorical variables and add interaction terms. However, this did not increase the cross-validated performance.
+
+What should we do with the categorical variables? During the data pre-processing step, I log transformed the loss so that the target is more symmetric. The basis for this can be found in the book Applied Predictive Modeling by Max Kuhn (developer of the R package `caret`) and Kjell Johnson [^10]. Many models work better with unskewed variables because the impact of outliers is lessened. 
+
+The family of transformations I used to unskew `x` is called Box Cox after the statisticians. 
+$$x^* = \begin{cases} \frac{x^\lambda - 1}{\lambda} & \lambda \neq 0 \\ 
+log(x) & \lambda = 0 \end{cases}$$
+
+The parameter of $\lambda$ depends on how skewed `x` is. The value of $\lambda$ can be estimated using the `BoxCoxTrans` function in the `caret` package. I transformed all the continuous variables using this set of transformations, being careful to transform `test` and `train` the same way. This produced an almost one point increase in performance. 
+
+One of the reasons I chose to use `xgboost` in the first place is because the tree-based regressors are robust to skewness. However, during this stage of the competition even half a point improvement is a worthwhile increase and it seems that the model performs marginally better with unskewed features. Because this set of features seemed promising, I dropped the learning rate from 0.01 to 0.003 which improve my public leaderboard score to 1118.2. 
+
+
+<br>
+
+## Model Essembling with H2O Neural Networks
+
+I improved the xgboost model with feature engineering and hyperparameter tuning. In order to further improve, I was interested in working with another model and ensembling the outputs. I chose neural nets next for a couple of reasons [^11]:
+
+* Neural nets have good predictive power with a large number of factors. 
+
+* They can find hidden interaction terms that may not be explicitly given
+
+* The learning method is very different from tree-based `xgboost` so ensembling with neural nets will likely have a bigger improvement.
+
+* Has a large corpus of prior implementations so we have a good place to start.
+
+The architecture of neural nets can be quite complex. In multi-layer preceptron (MLP) or deep-learning network, learning happens through a series of weights on connections (synapes) to different nodes (neurons). Inputs arrive at the input layer and head to one or more hidden layers. We don't interact with these layers directly but information is passed from the input to the output in a process called feedforward. Each neuron has an activation function (sigmoid or some other differentiable function) - the neuron only fires if the input goes over a threshold. Learning happens when error is backpropegated; starting with the neurons at the end of the network, weights are adjusted to minimize error.  
+
+![Example of a Neural Net for Image Classification](http://www.amax.com/blog/wp-content/uploads/2015/12/blog_deeplearning3.jpg)
+
+`R` has many implementations of neural nets, but no stand-out winner. I finally chose `h2o` because it has a relatively simple interface and it is parallel-aware [^12]. However, `h2o` has no support for custom evaluation functions or objective functions. I found training with `h2o` to be more time consuming than `xgboost` for a single run. However the program can scale well, preforming on anything between a laptop and a high performance cluster.  
+
+I set up my own cross-validation set-up to match as closely as possible the implementation in `xgboost`. With the package `caret` I set up 5-fold cross-validation. I tried tweaking many parameters by hand including:
+
+* neural network archtechture - number of hidden layers and number of neurons
+
+* learning rate - rate that weights are updated with gradient descent 
+
+* momentum - a factor that adds extra mass to a weight update; useful to prevent neural nets from getting stuck in a local minima.
+
+* activation functions - different neuronal activations including `tanh` and `rectifier`
+
+* dropout rate - sample of neurons to ignore; useful to control overfitting
+
+* epochs - number of rounds of learning
+
+I could not match my performance in `xgboost` in cross-validated error. I also found that increasing the number of epochs and decreasing the learning rate increased accuracy at the penalty of time (hours longer than `xgboost`). Because neural nets were not cross-validating above the benchmark set by `xgboost`, they could not help me for ensembling. 
+
+<br>
+
+### Preventing Overfitting
+
+At this point I sat first place on the leaderboard. I'm feeling pretty good but I remember one of the first rules I set myself: don't overfit to the leaderboard! Now I realized that I made several submissions that worked so-so in cross-validation, but a lot better than I expected on the leaderboard. That's in the danger-zone of overfitting. 
+
+Here I backtracked and looked at the correlation between cross-validation and leadboard score. Unfortunately I did not keep all of my cross-validation performance for each of my models. I did notice that my model started performing much better than expected when I dropped some features. This made me think that those features might not do so well on public leaderboard data. However, that doesn't tell me a lot about if those variables are important for the entire test set nessisarilly. By allowing my model selection to be impacted by the leaderboard, I'm overfitting.
+
+I went back to the full-model with + 120 extra features. That model produced a good CV score (1134.8) but an okay LB score (1120.1). That is almost two points lower than my best LB score. I re-ran that model with the same parameters and different seeds. I wanted to see if the that error was just a good CV split or an actually indicative of a good model. By averaging the output of these models, I can reduce varience (reduce the chance that I'm fitting to noise). 
+
+<br>
+
+## Conclusion
+
+Finally the journey of model accuracy is visualized below. Each milestone involved hours of parameter searching or data tranforming. The best score on the public leaderboard is 1118.2 which was good enough to place first (at the time of writing). However, my final submissions will be based on by own cross-validation metrics.
+
+```{r}
+score = c(1241.7, 1173.5, 1160.7, 1135.2, 1130.1, 1124.9, 1122.7, 1120.1, 1119.8, 1119.2, 1118.2)
+plot(score)
+```
+
+I started with `xgboost` and that was the main model I drew the most from. I also used a little bit of deep learning using `h2o` but found it finicky to tune and slow to train. Changing the loss to log loss made an almost 70 point difference in model performance. Similary changing the encoding strategy made a 13 point drop. Scores between 1161 and 1122 we the result of better hyper-parameters. Scores below 1120 were the result of feature-engineering. 
+
+**What I learned**:
+
+* Hyper-parameter tuning makes a big difference.
+
+* Feature is hard, but fruitful.
+
+* Getting the data in the right format goes a long way.
+
+* It is important to set-up a reproducible workflow.
+
+**Things I struggled with**:
+
+* Long training times make iterating difficult
+
+* Feature engineering is hard
+
+* Model ensembling is important, but time consuming
+
+* Tuning neural networks can be overwhelming
+
+**Mistakes I made along the way**:
+
+* Transforming the training loss but not the target loss
+
+* Encoding the train matrix with different column than the test one
+
+* Not setting the seed so cross-validation results differ from model results.
+
+**What I could have done**
+
+* Studied and implmented ensembling techniques such as stacking and bagging
+
+* Implemented automatic or semi-automatic hyper-parameter tuning with something like Bayesian Optimization. 
+
+* Spent more time on other models. 
+
+I learned a lot of practical skills including the importance of good parameters and features and interfacing with various packages. My two biggest take-aways are that it is a lot of work to tune models - it takes more work to get quickly deminishing gains, and that overfitting is an easy trap to fall into.
+
+<br>
+
+## References
+
+[^1]: https://www.kaggle.com/c/allstate-claims-severity
+
+[^2]: http://www.davidwind.dk/wp-content/uploads/2014/07/main.pdf
+
+[^3]: http://xgboost.readthedocs.io/en/latest/model.html
+
+[^4]: https://github.com/dmlc/xgboost/
+
+[^5]: https://www.analyticsvidhya.com/blog/2016/03/complete-guide-parameter-tuning-xgboost-with-codes-python/
+
+[^6]: https://www.kaggle.com/c/allstate-claims-severity/forums/t/24520/effect-of-mae/140334
+
+[^7]: http://www.cs.cornell.edu/courses/cs4780/2015fa/web/lecturenotes/lecturenote10.html
+
+[^8]: https://www.kaggle.com/iglovikov/allstate-claims-severity/xgb-1114
+
+[^9]: https://www.kaggle.com/mtinti/allstate-claims-severity/xgb-1110-from-vladimir-iglovikov-and-tilii7/code
+
+[^10]: Applied Predictive Modeling. Max Kuhn, Jonhson Kjell. ISBN 978-1-4614-6849-3
+
+[^11]: https://en.wikipedia.org/wiki/Artificial_neural_network
+
+[^12]: https://cran.r-project.org/web/packages/h2o/h2o.pdf
+
