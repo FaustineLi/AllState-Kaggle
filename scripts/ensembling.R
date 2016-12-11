@@ -1,5 +1,7 @@
 library(xgboost)
-res = readRDS('res_run.RDS')
+
+# result from best
+best = round(res$best_iteration / 0.8)
 
 # evaluation function
 xgb_eval = function (yhat, dtrain) {
@@ -22,7 +24,7 @@ set.seed(0)
 
 xgb_params = list(
     eta = 0.003,
-    colsample_bytree = 0.5,
+    colsample_bytree = 0.4,
     subsample = 0.8,
     max_depth = 12,
     min_child_weight = 100,
@@ -53,7 +55,7 @@ set.seed(0)
 
 xgb_params = list(
     eta = 0.003,
-    colsample_bytree = 0.5,
+    colsample_bytree = 0.4,
     subsample = 0.8,
     max_depth = 12,
     min_child_weight = 100,
@@ -84,7 +86,7 @@ set.seed(0)
 
 xgb_params = list(
     eta = 0.003,
-    colsample_bytree = 0.5,
+    colsample_bytree = 0.4,
     subsample = 0.8,
     max_depth = 12,
     min_child_weight = 100,
