@@ -30,12 +30,6 @@ for (i in seq_len(ncol(cat_features))) {
     xtest = cbind(xtest, new_feat)
 }
 
-# remove unused features
-importance_extra = readRDS('extra_feat_import.RDS')
-used_features = importance_extra$Feature
-xtrain = subset(xtrain, select=used_features)
-xtest  = subset(xtest,  select=used_features)
-
 # scale and unskew continuous features
 for (j in contvar) {
     # unskew using boxcox transformation
