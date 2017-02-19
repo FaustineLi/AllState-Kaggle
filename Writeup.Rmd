@@ -9,6 +9,8 @@ output:
 ```{r, echo=FALSE}
 train = read.csv('data\\pml_train.csv')
 library('knitr')
+library('ggplot2')
+library('xgboost')
 ```
 
 ## Introduction
@@ -172,7 +174,6 @@ Of course, there is a lot of room to grow in terms of model performance. I wante
 First, I fixed the learning rate at higher value and tuned two of the tree parameters, `max_depth` and `min_child_weight`. I started with a compartively large learning rate, `eta = 0.1`, and used a grid search to explore the parameter space. The results are plotted below. As a side note, the computational time for a naive grid search were very high, taking 3-4 hours on the statistics department server (256 GB RAM, 12-core Intel Xeon CPU).  
 
 ```{r, echo=FALSE}
-library('ggplot2')
 grid1 = readRDS('result//grid_result.RDS')
 ggplot(grid1, aes(x=max_depth, y=cv_error, color=as.factor(child_weight)))+
     geom_point() + 
@@ -229,14 +230,14 @@ At this point, I read an informative post of the Kaggle forum - that although th
 This is illustrated below [^7]:
 
 ```{r, echo=FALSE}
-x = seq(-3,3, 0.05)
+x = seq(-3, 3, 0.05)
 squared = x^2
 logcosh = log(cosh(x))
 abs = abs(x)
-plot(x, squared, type='l', ylim=c(0,4), col='red')
+plot(x, squared, type='l', ylim=c(0, 4), col='red')
 lines(x, logcosh, col='blue')
 lines(x, abs)
-legend('topright', c('squared loss', 'absolute error loss', 'log cosh loss'), col = c(2,1,4), lty=1)
+legend('top', c('squared loss', 'absolute error loss', 'log cosh loss'), col = c(2,1,4), lty=1, bty = 'n')
 ```
 
 I chose the log(cosh(x)) loss function because it is twice differentiable (important as `xgboost` uses the second derivative in its numeric method) and better approximates our objective than MSE. Thankfully `xgboost` has the ability to use custom objective functions. 

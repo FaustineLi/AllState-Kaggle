@@ -4,7 +4,7 @@ library(xgboost)
 best = round(res$best_iteration / 0.8)
 
 # evaluation function
-xgb_eval = function (yhat, dtrain) {
+xgb_eval = function(yhat, dtrain) {
     y = getinfo(dtrain, 'label')
     err = mean(abs(exp(y) - exp(yhat)))
     return (list(metric = 'error', value = err))
